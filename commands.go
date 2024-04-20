@@ -145,20 +145,23 @@ func cmdUpload(client *sdk.Client, renderer *OutputRenderer, args []string) {
 		// Upload file
 		numFiles++
 		client.ResetChannels()
-		done := false
 		go func() {
 			fileStat := <-client.ChannelTransferStart
 			renderer.initProgressBar(fileStat.Size(), "Uploading "+fmt.Sprintf("%-20s", cutString(fileStat.Name(), 17)+"..."))
-		}()
-		go func() {
-			for !done {
-				bytes := <-client.ChannelTransferProgress
-				renderer.updateProgressBar(bytes)
-				time.Sleep(50 * time.Millisecond)
+
+			var totalBytes int64
+			tick := time.NewTicker(50 * time.Millisecond)
+			defer tick.Stop()
+			for {
+				select {
+				case bytes := <-client.ChannelTransferProgress:
+					totalBytes = bytes
+				case <-tick.C:
+					renderer.updateProgressBar(totalBytes)
+				case <-client.ChannelTransferFinish:
+					return
+				}
 			}
-		}()
-		go func() {
-			done = <-client.ChannelTransferFinish
 		}()
 		err = client.Upload(sourceFile, targetFolder)
 		if err != nil {
@@ -172,11 +175,10 @@ func cmdUpload(client *sdk.Client, renderer *OutputRenderer, args []string) {
 }
 
 func cmdDownload(client *sdk.Client, renderer *OutputRenderer, args []string) {
-	done := false
 	go func() {
 		var fileStat fs.FileInfo = nil
 		for fileStat == nil {
-			fileStat := <-client.ChannelTransferStart
+			fileStat = <-client.ChannelTransferStart
 			if fileStat == nil {
 				renderer.initSpinner("Retrieving information...")
 			} else {
@@ -184,16 +186,20 @@ func cmdDownload(client *sdk.Client, renderer *OutputRenderer, args []string) {
 				renderer.initProgressBar(fileStat.Size(), "Downloading "+fileStat.Name()+"...")
 			}
 		}
-	}()
-	go func() {
-		for !done {
-			bytes := <-client.ChannelTransferProgress
-			renderer.updateProgressBar(bytes)
-			time.Sleep(50 * time.Millisecond)
+
+		var totalBytes int64
+		tick := time.NewTicker(50 * time.Millisecond)
+		defer tick.Stop()
+		for {
+			select {
+			case bytes := <-client.ChannelTransferProgress:
+				totalBytes = bytes
+			case <-tick.C:
+				renderer.updateProgressBar(totalBytes)
+			case <-client.ChannelTransferFinish:
+				return
+			}
 		}
-	}()
-	go func() {
-		done = <-client.ChannelTransferFinish
 	}()
 	err := client.Download(args[0], args[1])
 	if err != nil {
